@@ -16,12 +16,23 @@ if True:
     import os
     data_files = os.listdir(".")
 #    print(data_files)
-    cvs_data_files = [x for x in data_files if x.endswith(".csv")]
+    csv_data_files = [x for x in data_files if x.endswith(".csv")]
 
-    stocks = set(["SAND", "ATCO_B"])
-    for data_file in cvs_data_files:
-        stock = data_file.partition("-")[0]
-        if stock not in stocks:
+    stocks = set([
+        "SAND",
+        "ATCO_B",
+        "VOLV-B",
+        "VOLV-A",
+        "NDA-SEK",
+        "SHB-A",
+        "SHB-B",
+    ])
+    import re
+    for data_file in csv_data_files:
+        match = re.match(r"([A-Z-_]+)-[1-2]", data_file)
+        assert match, data_file
+        stock = match.group(1)
+        if False and stock not in stocks:
             print("Ignoring %s" % stock)
 #         for stock, data_file in (
 #            ("ATCO B", "ATCO_B-2016-09-26-2017-09-26.csv"),
