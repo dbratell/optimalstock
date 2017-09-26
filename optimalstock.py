@@ -1,43 +1,22 @@
-start_sum = 1000
-start_date = '2017-01-01'
-end_date = '2017-01-31'
+import csv
+import locale
+import os
+import re
 
-stocks = [
-    #    "ABB.ST",
-    "SAND.ST", "AXFO.ST"]
-
-if True:
-
-    import locale
+def parse_data():
+    # To get locale.atof to do the right thing
     locale.setlocale( locale.LC_ALL, 'Swedish' ) 
 
-    import csv
     hist_data = {}
-    import os
     data_files = os.listdir(".")
-#    print(data_files)
     csv_data_files = [x for x in data_files if x.endswith(".csv")]
 
-    stocks = set([
-        "SAND",
-        "ATCO_B",
-        "VOLV-B",
-        "VOLV-A",
-        "NDA-SEK",
-        "SHB-A",
-        "SHB-B",
-    ])
-    import re
     for data_file in csv_data_files:
-        match = re.match(r"([A-Z-_]+)-[1-2]", data_file)
+        match = re.match(r"((?:[A-Z][A-Z0-9]*[-_]?)+)-[1-2]", data_file)
         assert match, data_file
         stock = match.group(1)
         if False and stock not in stocks:
             print("Ignoring %s" % stock)
-#         for stock, data_file in (
-#            ("ATCO B", "ATCO_B-2016-09-26-2017-09-26.csv"),
-#            ("SAND", "SAND-1990-08-25-2017-09-25.csv")
-#            ):
         with open(data_file) as csvfile:
             data = {} # Date -> (open, close)
             first_line = csvfile.readline()
@@ -48,88 +27,113 @@ if True:
                 if headers is None:
                     headers = row
                     assert headers[0] == "Date"
-                    assert headers[3] == "Opening price", headers[2]
-                    assert headers[6] == "Closing price", headers[5]
+                    assert headers[3] == "Opening price", headers[3]
+                    assert headers[6] == "Closing price", headers[6]
+                    assert headers[8] == "Total volume", headers[8]
+                    assert headers[10] == "Trades", headers[10]
                     continue
                 try:
-                    if row[3] == "" or row[6] == "":
-                        assert headers[10] == "Trades"
+                    if row[3] == "" or row[6] == "" or row[8] == "":
 #                        assert row[10] == "0", row
                         continue
                     date = row[0]
                     opening_price = locale.atof(row[3])
                     closing_price = locale.atof(row[6])
+                    volume = locale.atof(row[8]) # Can be non-integer because of splits
                 except ValueError:
+                    print(data_file)
                     print(row)
                     raise
-                data[date] = (opening_price, closing_price)
+                data[date] = (opening_price, closing_price, volume)
 
         hist_data[stock] = data
+    return hist_data
 
-if False:
-    import pandas_datareader
-    from pandas import Panel, Index, DatetimeIndex
-
-    data_source = "yahoo" # or 'google' # or "yahoo"
-
-    data = pandas_datareader.DataReader(stocks, data_source,
-                                        start_date, end_date)
-    print(data)
-    print(data.ix("Open"))
-    print(data.axes)
-
-    print(data.get_value(Index("Open"), DatetimeIndex("2017-01-04"),
-                         Index("SAND.ST")))
-
-
-if False:
-    import yahoo_finance
+def run_simulation(start_sum, courtage, min_courtage, hist_data, reverse=False):
+    money = start_sum
+    total_courtage = 0
+    plan = []
     import math
-    hist_data = {}
-    for stock in stocks:
-        print("Fetch " + stock)
-        share = yahoo_finance.Share(stock)
-        hist_data[stock] = share.get_historical(start_date, end_date)
+    import datetime
+    start_datetime = datetime.date(2017, 8, 1)
+    for day in (start_datetime + datetime.timedelta(n) for n in range(0, 380)):
+        date = day.isoformat()
+        best_gain_for_day = 0 # money
+        best_stock_data = None # Don't buy anything at all
+        had_options = False
+        for stock, stock_data in hist_data.iteritems():
+            if not date in stock_data:
+                # Sunday or something
+                continue
+            had_options = True
+            open_price = stock_data[date][0] # float(stock_data["Open"])
+            close_price = stock_data[date][1] # float(stock_data["Adj_Close"])
+            if (not reverse and open_price <= close_price or
+                reverse and open_price >= close_price):
+                shares = int(math.floor(money / open_price))
+                volume = stock_data[date][2]
+                if shares > volume / 100.0:
+                    # Never do more than 1% of the trade in the stock.
+                    shares = int(math.floor(volume / 100.0))
+                if shares == 0:
+                    continue
+                courtage = (max(min_courtage, math.ceil(shares * open_price * courtage_level)) +
+                            max(min_courtage, math.ceil(shares * close_price * courtage_level)))
+                gain = shares * (close_price - open_price) - courtage
+                if reverse:
+                    if gain < best_gain_for_day:
+                        best_gain_for_day = gain
+                        best_stock_data = (date, shares, stock, courtage, stock_data[date])
+                else:
+                    if gain > best_gain_for_day:
+                        best_gain_for_day = gain
+                        best_stock_data = (date, shares, stock, courtage, stock_data[date])
+        if best_stock_data is not None:
+            money += best_gain_for_day
+            total_courtage += best_stock_data[3]
+            sign_str = "+"
+            if reverse:
+                sign_str = "" # Minus already in the number
+            print("%s: Buy and sell %d %s -> %s%.2f -> %.2f (total courtage: %d)" % (date,
+                                                                                best_stock_data[1],
+                                                                                best_stock_data[2],
+                                                                                     sign_str,
+                                                                                best_gain_for_day,
+                                                                                money,
+                                                                                total_courtage))
+        elif had_options:
+            print("%s: No stocks worth trading. Still %.2f (total courtage: %d)" % (date,
+                                                                                money,
+                                                                                total_courtage))
 
-money = start_sum
-total_courtage = 0
-plan = []
-import math
-import datetime
-start_datetime = datetime.date(2017, 1, 1)
-if True:
+    if money == start_sum:
+        print("Sorry, nothing to do")
+
+    return money
+
+if False:
+    # Fast
+    courtage_level = 0.0 # 0.15%
+    min_courtage = 99
+elif False:
+    # Medium
+    courtage_level = 0.0015 # 0.15%
+    min_courtage = 39
+elif True:
+    # Small
     courtage_level = 0.0025 # 0.25%
     min_courtage = 1
 else:
+    # Start
     courtage_level = 0
     min_courtage = 0
-for day in (start_datetime + datetime.timedelta(n) for n in range(0, 380)):
-    date = day.isoformat()
-#    date = "2017-01-%02d" % day
-    best_gain_for_day = 0 # money
-    best_stock_data = None # Don't buy anything at all
-    for stock, stock_data in hist_data.iteritems():
-        if not date in stock_data:
-            # Sunday or something
-            continue
-        open_price = stock_data[date][0] # float(stock_data["Open"])
-        close_price = stock_data[date][1] # float(stock_data["Adj_Close"])
-        if open_price <= close_price and open_price <= money:
-            shares = math.floor(money / open_price)
-            courtage = max(min_courtage,
-                           math.ceil(shares * (open_price + close_price) * courtage_level))
-#            print("yay: %d" % shares)
-            gain = shares * (close_price - open_price) - courtage
-            if gain > best_gain_for_day:
-                best_gain_for_day = gain
-                best_stock_data = (date, shares, stock, courtage, stock_data[date])
-    if best_stock_data is not None:
-        money += best_gain_for_day
-        total_courtage += best_stock_data[3]
-        print("%s -> +%g -> %g (total courtage: %g)" % (best_stock_data, best_gain_for_day, money, total_courtage))
 
-if money == start_sum:
-    print("Sorry, nothing to do")
+start_money = 10000
+
+hist_data = parse_data()
+end_money = run_simulation(start_money, courtage_level, min_courtage, hist_data,
+                           reverse=False)
+print(end_money)
     
             
         
