@@ -49,13 +49,14 @@ def parse_data():
         hist_data[stock] = data
     return hist_data
 
-def run_simulation(start_sum, courtage, min_courtage, hist_data, reverse=False):
+def run_simulation(start_sum, courtage, min_courtage, hist_data, max_volume_share=0.001, reverse=False,
+                   verbose=False):
     money = start_sum
     total_courtage = 0
     plan = []
     import math
     import datetime
-    start_datetime = datetime.date(2017, 8, 1)
+    start_datetime = datetime.date(2017, 1, 1)
     for day in (start_datetime + datetime.timedelta(n) for n in range(0, 380)):
         date = day.isoformat()
         best_gain_for_day = 0 # money
@@ -70,11 +71,11 @@ def run_simulation(start_sum, courtage, min_courtage, hist_data, reverse=False):
             close_price = stock_data[date][1] # float(stock_data["Adj_Close"])
             if (not reverse and open_price <= close_price or
                 reverse and open_price >= close_price):
-                shares = int(math.floor(money / open_price))
+                shares = int(math.floor(max(money, 0) / open_price))
                 volume = stock_data[date][2]
-                if shares > volume / 100.0:
+                if shares > volume * max_volume_share:
                     # Never do more than 1% of the trade in the stock.
-                    shares = int(math.floor(volume / 100.0))
+                    shares = int(math.floor(volume * max_volume_share))
                 if shares == 0:
                     continue
                 courtage = (max(min_courtage, math.ceil(shares * open_price * courtage_level)) +
@@ -91,23 +92,28 @@ def run_simulation(start_sum, courtage, min_courtage, hist_data, reverse=False):
         if best_stock_data is not None:
             money += best_gain_for_day
             total_courtage += best_stock_data[3]
-            sign_str = "+"
-            if reverse:
-                sign_str = "" # Minus already in the number
-            print("%s: Buy and sell %d %s -> %s%.2f -> %.2f (total courtage: %d)" % (date,
-                                                                                best_stock_data[1],
-                                                                                best_stock_data[2],
-                                                                                     sign_str,
-                                                                                best_gain_for_day,
-                                                                                money,
-                                                                                total_courtage))
+            if verbose:
+                sign_str = "+"
+                if reverse:
+                    sign_str = "" # Minus already in the number
+                print("%s: Buy and sell %d %s -> %s%.2f -> %.2f (total courtage: %d)" % (
+                    date,
+                    best_stock_data[1],
+                    best_stock_data[2],
+                    sign_str,
+                    best_gain_for_day,
+                    money,
+                    total_courtage))
         elif had_options:
-            print("%s: No stocks worth trading. Still %.2f (total courtage: %d)" % (date,
-                                                                                money,
-                                                                                total_courtage))
+            if verbose:
+                print("%s: No stocks worth trading. Still %.2f (total courtage: %d)" % (
+                    date,
+                    money,
+                    total_courtage))
 
     if money == start_sum:
-        print("Sorry, nothing to do")
+        if verbose:
+            print("Sorry, nothing to do")
 
     return money
 
@@ -128,12 +134,35 @@ else:
     courtage_level = 0
     min_courtage = 0
 
-start_money = 10000
+start_money = 100000
 
 hist_data = parse_data()
-end_money = run_simulation(start_money, courtage_level, min_courtage, hist_data,
-                           reverse=False)
-print(end_money)
+courtage_options = ((0, 99),
+                    (0.0015, 39),
+                    (0.0025, 1))
+
+best_money = 0
+best_courtage_level = 1
+best_min_courtage = 99999
+reverse = True
+if reverse:
+    best_money = start_money
+else:
+    best_money = 0
+
+for courtage_level, min_courtage in courtage_options:
+    end_money = run_simulation(start_money, courtage_level, min_courtage, hist_data,
+                               reverse=reverse, verbose=False)
+    if (not reverse and end_money > best_money or
+        reverse and end_money < best_money):
+        best_money = end_money
+        best_courtage_level = courtage_level
+        best_min_courtage = min_courtage
+
+end_money = run_simulation(start_money, best_courtage_level, best_min_courtage, hist_data,
+                           reverse=reverse, verbose=True)
+print("With courtage level=%.2f%% and min courtage=%d we end up with %.0f" % (
+    best_courtage_level * 100.0, best_min_courtage, end_money))
     
             
         
